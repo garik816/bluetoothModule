@@ -2,7 +2,11 @@ name: ESP32-S3 firmware and KCX parser
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+    paths:
+      - 'main/**'
   workflow_dispatch:
 
 jobs:

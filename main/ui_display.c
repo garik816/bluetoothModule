@@ -236,6 +236,7 @@ static void draw_screen(const ui_view_t *view)
     rectangle(0, 0, LCD_W, LCD_H, COLOR_WHITE);
     rectangle(0, 0, LCD_W, 43, COLOR_NAVY);
     print_text(14, 9, "BT AUDIO / KCX V1.7", 3, COLOR_WHITE);
+    print_text(408, 5, "CAL", 1, COLOR_WHITE);
     if (view->calibrating) {
         static const int marks_x[5] = {45, 435, 435, 45, 240};
         static const int marks_y[5] = {70, 70, 210, 210, 136};
@@ -268,8 +269,8 @@ static void draw_screen(const ui_view_t *view)
         print_text(290,y+12,d->mac,1,index==view->selected ? COLOR_WHITE : COLOR_BLUE);
     }
     draw_button(10,224,105,43,"SCAN",COLOR_BLUE);
-    draw_button(124,224,108,43,"SELECT",COLOR_GREEN);
-    draw_button(241,224,110,43,"PAIR",COLOR_BLUE);
+    draw_button(124,224,108,43,"CONNECT",COLOR_GREEN);
+    draw_button(241,224,110,43,"DROP",COLOR_BLUE);
     draw_button(360,224,108,43,"MORE",COLOR_NAVY);
     if (view->notice[0]) {
         rectangle(18,204,444,18,COLOR_GRAY);

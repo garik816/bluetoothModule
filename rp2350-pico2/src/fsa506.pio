@@ -1,0 +1,11 @@
+; 8080 write-only: 8 GPIO data bits, 1 side-set pin /WR.
+; Each TX FIFO word contains one byte in low 8 bits.
+; /WR falls after data is stable, then returns HIGH.
+.program fsa_i80
+.side_set 1
+.wrap_target
+    pull block side 1
+    out pins, 8 side 1 [1]
+    nop side 0 [2]
+    nop side 1 [1]
+.wrap

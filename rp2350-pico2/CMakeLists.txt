@@ -23,7 +23,7 @@ add_executable(bluetooth_module_pico2
     src/kcx_protocol.c
 )
 target_include_directories(bluetooth_module_pico2 PRIVATE src)
-pico_generate_pio_header(bluetooth_module_pico2 src/fsa506.pio)
+pico_generate_pio_header(bluetooth_module_pico2 "${CMAKE_CURRENT_LIST_DIR}/src/fsa506.pio")
 target_link_libraries(bluetooth_module_pico2 PRIVATE
     pico_stdlib
     hardware_pio

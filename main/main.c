@@ -27,7 +27,7 @@
 #define CAL_MAGIC 0x46534154u
 #define CAL_VERSION 1
 #define COMMAND_TIMEOUT_US 5000000LL
-#define APP_EVENTS_CAPACITY 32
+#define APP_EVENTS_CAPACITY 64
 
 static const char *TAG="bt_audio";
 static const int s_cal_x[5]={45,435,435,45,240};
@@ -265,8 +265,12 @@ void app_main(void)
         event_t ev;
         bool dirty=false;
         if(xQueueReceive(s_events,&ev,pdMS_TO_TICKS(100))==pdTRUE){
-            if(ev.kind==EVENT_TOUCH_UP){handle_touch(ev.x,ev.y);dirty=true;}
-            else if(ev.kind==EVENT_KCX_LINE) dirty=handle_kcx(ev.line);
+            /* Drain UART bursts before redrawing slow parallel LCD tiles.
+               Without coalescing, SCAN floods the event queue. */
+            do {
+                if(ev.kind==EVENT_TOUCH_UP){handle_touch(ev.x,ev.y);dirty=true;}
+                else if(ev.kind==EVENT_KCX_LINE) dirty=handle_kcx(ev.line) || dirty;
+            } while(xQueueReceive(s_events,&ev,0)==pdTRUE);
         }
         int64_t now=esp_timer_get_time();
         if(s_stage!=ACTION_IDLE && now>s_deadline){

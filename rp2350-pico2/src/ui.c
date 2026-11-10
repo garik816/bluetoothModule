@@ -6,6 +6,10 @@
 #include "fsa506.h"
 #include <stdio.h>
 #include <string.h>
+#include "build_version.h"
+#ifndef MODULE_KCX_ENABLED
+#define MODULE_KCX_ENABLED 0
+#endif
 
 #define NAVY FSA_RGB565(18,36,64)
 #define BLUE FSA_RGB565(19,109,204)
@@ -24,7 +28,9 @@ static void draw_contents(const ui_state_t *ui)
 {
     fsa_rect(0,0,480,272,WHITE);
     fsa_rect(0,0,480,43,NAVY);
-    fsa_text(12,10,"BT МАГНІТОЛА",2,WHITE);
+    char title[88];
+    snprintf(title,sizeof(title),"universal bluetooth module v.%s",FIRMWARE_VERSION);
+    fsa_text(8,12,title,1,WHITE);
     fsa_text(423,11,"CAL",1,WHITE);
     if(ui->calibrating){
         const int xx[5]={45,435,435,45,240};
@@ -38,6 +44,19 @@ static void draw_contents(const ui_state_t *ui)
         fsa_text(95,244,"ТОРКНІТЬСЯ ХРЕСТА",1,INK);
         return;
     }
+#if !MODULE_KCX_ENABLED
+    fsa_text(12,50,"TOUCH DIAGNOSTICS / KCX OFF",1,BLUE);
+    char position[80];
+    snprintf(position,sizeof(position),"RAW %d,%d  SCREEN %d,%d",
+             ui->raw_x,ui->raw_y,ui->screen_x,ui->screen_y);
+    fsa_text(12,85,position,1,INK);
+    fsa_text(12,117,"TOUCH SCREEN TO TEST POSITION",1,INK);
+    fsa_text(12,145,"CAL - TOP RIGHT CORNER",1,INK);
+    fsa_text(12,173,"USB SERIAL: p c d h v",1,INK);
+    fsa_rect(8,206,464,18,GRAY);
+    fsa_text(13,209,ui->notice,1,INK);
+    return;
+#endif
     fsa_text(12,49,"KCX:",2,INK);
     const char *status=!ui->bt.ready?"НЕМАЄ ЗВ'ЯЗКУ":
         (ui->bt.mode_known&&!ui->bt.transmitter)?"РЕЖИМ RX":

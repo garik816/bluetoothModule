@@ -8,7 +8,10 @@ typedef struct {
     uint32_t checksum;
 } touch_calibration_t;
 void touch_init(void);
-bool touch_poll(touch_sample_t *sample); /* event on release */
+bool touch_poll(touch_sample_t *sample); /* one event per debounced release */
+void touch_debug_enable(bool enable);
+bool touch_debug_enabled(void);
+void touch_debug_probe(void); /* raw ADC/electrode diagnostics on USB */
 bool touch_calibration_load(touch_calibration_t *out);
 bool touch_calibration_save(const touch_calibration_t *cal);
 bool touch_calibration_make(const touch_sample_t samples[5],touch_calibration_t *out);

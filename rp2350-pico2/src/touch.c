@@ -1,8 +1,10 @@
 /*
- * Four-wire resistive touchscreen driver for Pico SDK and RP2350 ADC.
- * X1=GP26/ADC0, Y1=GP27/ADC1; X2=GP20, Y2=GP21.
- * Records 5-point calibration in reserved LAST 4096-byte flash sector.
- * Configure app / linker to leave that sector unused (see CMake file).
+ * RP2350 Pico 2 / 4-wire resistive Touch diagnostic driver.
+ * FSA506 connector 30 TOUCH1=GP26/ADC0 (X1), 31 TOUCH3=GP20 (X2),
+ * 32 TOUCH2=GP27/ADC1 (Y1), 33 TOUCH4=GP21 (Y2).
+ *
+ * Two consecutive pressed polls and three released polls debounce a gesture;
+ * one release -> one calibration point. Raw X/Y values are averaged.
  */
 #include "touch.h"
 #include "pins.h"
@@ -18,8 +20,22 @@
 
 #define CAL_MAGIC 0x46534154u
 #define CAL_SECTOR_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
-#define CAL_SAMPLES 5
-static const uint pins[4]={TOUCH_X1,TOUCH_X2,TOUCH_Y1,TOUCH_Y2};
+#define AXIS_SAMPLES 6
+#define POLL_INTERVAL_MS 25u
+#define PRESS_DEBOUNCE 2u
+#define RELEASE_DEBOUNCE 3u
+#define RAW_REPORT_MS 200u
+
+static const uint s_pins[4]={TOUCH_X1,TOUCH_X2,TOUCH_Y1,TOUCH_Y2};
+static bool s_verbose=true,s_active=false;
+static uint32_t s_last_poll_ms,s_last_raw_log,s_gesture_start;
+static uint32_t s_sum_x,s_sum_y,s_points,s_gesture_id;
+static uint32_t s_last_idle;
+static uint8_t s_press_count,s_release_count;
+
+static uint32_t now_ms(void){return to_ms_since_boot(get_absolute_time());}
+void touch_debug_enable(bool enable){s_verbose=enable;printf("[TOUCH] raw diagnostics %s\n",enable?"ENABLED":"DISABLED");}
+bool touch_debug_enabled(void){return s_verbose;}
 
 static uint32_t cal_crc(const touch_calibration_t *c)
 {
@@ -27,132 +43,228 @@ static uint32_t cal_crc(const touch_calibration_t *c)
     uint32_t crc=0xffffffffu;
     for(size_t i=0;i<offsetof(touch_calibration_t,checksum);++i){
         crc^=p[i];
-        for(int b=0;b<8;++b)crc=(crc>>1)^((crc&1u)?0xedb88320u:0);
+        for(int j=0;j<8;++j)crc=(crc>>1)^((crc&1u)?0xedb88320u:0);
     }
     return ~crc;
 }
-static bool cal_valid(const touch_calibration_t *c)
+static bool cal_valid(const touch_calibration_t *c, bool verbose)
 {
-    if(c->magic!=CAL_MAGIC || c->checksum!=cal_crc(c))return false;
+    if(c->magic!=CAL_MAGIC){
+        if(verbose)printf("[CAL STORAGE] no saved calibration: magic=%08lx\n",(unsigned long)c->magic);
+        return false;
+    }
+    uint32_t expected=cal_crc(c);
+    if(c->checksum!=expected){
+        if(verbose)printf("[CAL STORAGE] checksum mismatch: stored=%08lx computed=%08lx\n",
+                          (unsigned long)c->checksum,(unsigned long)expected);
+        return false;
+    }
     if(c->left<0||c->left>4095||c->right<0||c->right>4095||
-       c->top<0||c->top>4095||c->bottom<0||c->bottom>4095)return false;
-    return abs(c->right-c->left)>=700&&abs(c->bottom-c->top)>=700;
+       c->top<0||c->top>4095||c->bottom<0||c->bottom>4095){
+        if(verbose)printf("[CAL STORAGE] invalid raw endpoints X=%ld..%ld Y=%ld..%ld\n",
+                 (long)c->left,(long)c->right,(long)c->top,(long)c->bottom);
+        return false;
+    }
+    int dx=abs(c->right-c->left),dy=abs(c->bottom-c->top);
+    if(dx<700||dy<700){
+        if(verbose)printf("[CAL STORAGE] insufficient span X=%d Y=%d (min 700)\n",dx,dy);
+        return false;
+    }
+    return true;
 }
 bool touch_calibration_load(touch_calibration_t *out)
 {
     if(!out)return false;
-    const touch_calibration_t *stored=(const touch_calibration_t *)
-        (XIP_BASE+CAL_SECTOR_OFFSET);
-    memcpy(out,stored,sizeof(*out));
-    return cal_valid(out);
+    const touch_calibration_t *saved=(const touch_calibration_t*)(XIP_BASE+CAL_SECTOR_OFFSET);
+    memcpy(out,saved,sizeof(*out));
+    bool valid=cal_valid(out,true);
+    if(valid)printf("[CAL STORAGE] restored X=%ld..%ld Y=%ld..%ld\n",
+                    (long)out->left,(long)out->right,(long)out->top,(long)out->bottom);
+    return valid;
 }
-bool touch_calibration_save(const touch_calibration_t *cal)
+bool touch_calibration_save(const touch_calibration_t *c)
 {
-    if(!cal||!cal_valid(cal))return false;
+    if(!c || !cal_valid(c,true))return false;
     static uint8_t page[FLASH_PAGE_SIZE] __attribute__((aligned(4)));
     memset(page,0xff,sizeof(page));
-    memcpy(page,cal,sizeof(*cal));
-    /* Single-core firmware: interrupt masking keeps USB IRQ from executing
-       flash code during erase/program. Do not start another core. */
-    uint32_t irq=save_and_disable_interrupts();
+    memcpy(page,c,sizeof(*c));
+    printf("[CAL STORAGE] erase/program flash sector at 0x%08lx, size=%lu\n",
+           (unsigned long)CAL_SECTOR_OFFSET,(unsigned long)FLASH_SECTOR_SIZE);
+    /* This firmware deliberately uses core 0 only. While programming flash,
+       interrupt masking prevents the USB ISR from fetching XIP code. */
+    uint32_t irq_state=save_and_disable_interrupts();
     flash_range_erase(CAL_SECTOR_OFFSET,FLASH_SECTOR_SIZE);
     flash_range_program(CAL_SECTOR_OFFSET,page,FLASH_PAGE_SIZE);
-    restore_interrupts(irq);
-    touch_calibration_t verify;
-    return touch_calibration_load(&verify)&&
-           memcmp(&verify,cal,sizeof(*cal))==0;
+    restore_interrupts(irq_state);
+    touch_calibration_t check;
+    bool ok=touch_calibration_load(&check)&&memcmp(&check,c,sizeof(*c))==0;
+    printf("[CAL STORAGE] verify: %s\n",ok?"PASS":"FAIL");
+    return ok;
 }
-static void release_pins(void)
+static void release_all(void)
 {
     for(size_t i=0;i<4;++i){
-        gpio_init(pins[i]);
-        gpio_set_dir(pins[i],GPIO_IN);
-        gpio_disable_pulls(pins[i]);
+        gpio_init(s_pins[i]);
+        gpio_set_dir(s_pins[i],GPIO_IN);
+        gpio_disable_pulls(s_pins[i]);
     }
 }
 static void drive(uint pin,bool high)
 {
     gpio_init(pin);
-    gpio_put(pin,high?1:0);
+    gpio_put(pin,high);
     gpio_set_dir(pin,GPIO_OUT);
 }
-static bool is_pressed(void)
+static bool sense_pressed(uint32_t *digital_y1)
 {
-    release_pins();
+    /* Hold BOTH X electrodes at GND, use Y1 pull-up to detect contact. */
+    release_all();
     drive(TOUCH_X1,false);drive(TOUCH_X2,false);
     gpio_pull_up(TOUCH_Y1);
-    busy_wait_us_32(250);
-    bool pressed=!gpio_get(TOUCH_Y1);
-    release_pins();
-    return pressed;
+    busy_wait_us_32(350);
+    bool level=gpio_get(TOUCH_Y1);
+    if(digital_y1)*digital_y1=(uint32_t)level;
+    release_all();
+    return !level;
 }
-static int read_axis(uint hi,uint lo,uint sample_gpio)
+static int read_axis(uint high_pin,uint low_pin,uint adc_pin)
 {
-    release_pins();
-    adc_gpio_init(sample_gpio);
-    drive(hi,true);
-    drive(lo,false);
-    busy_wait_us_32(250);
-    adc_select_input(sample_gpio==TOUCH_X1?0:1);
-    (void)adc_read();
-    int sum=0;
-    for(int i=0;i<CAL_SAMPLES;++i)sum+=adc_read();
-    release_pins();
-    return sum/CAL_SAMPLES;
+    release_all();
+    adc_gpio_init(adc_pin);
+    drive(high_pin,true);
+    drive(low_pin,false);
+    busy_wait_us_32(300);
+    adc_select_input(adc_pin==TOUCH_X1?0:1);
+    (void)adc_read(); /* discard ADC sample after mux change */
+    uint32_t sum=0;
+    for(int i=0;i<AXIS_SAMPLES;++i)sum+=adc_read();
+    release_all();
+    return (int)(sum/AXIS_SAMPLES);
 }
 void touch_init(void)
 {
     adc_init();
-    release_pins();
+    release_all();
+    printf("[TOUCH] RP2350 4-wire: X1=GP%d ADC0 X2=GP%d Y1=GP%d ADC1 Y2=GP%d\n",
+           TOUCH_X1,TOUCH_X2,TOUCH_Y1,TOUCH_Y2);
+    printf("[TOUCH] polling=%ums debounce press=%u release=%u samples=%u\n",
+           POLL_INTERVAL_MS,PRESS_DEBOUNCE,RELEASE_DEBOUNCE,AXIS_SAMPLES);
+}
+void touch_debug_probe(void)
+{
+    uint32_t digital;
+    bool pressed=sense_pressed(&digital);
+    int raw_x=read_axis(TOUCH_X1,TOUCH_X2,TOUCH_Y1);
+    int raw_y=read_axis(TOUCH_Y1,TOUCH_Y2,TOUCH_X1);
+    printf("[TOUCH PROBE] Y1_pullup=%lu pressed=%d Xraw(ADC1 GP%d)=%d Yraw(ADC0 GP%d)=%d\n",
+           (unsigned long)digital,pressed,TOUCH_Y1,raw_x,TOUCH_X1,raw_y);
+    printf("[TOUCH PROBE] pin map: #30 TOUCH1=GP%d #31 TOUCH3=GP%d #32 TOUCH2=GP%d #33 TOUCH4=GP%d\n",
+           TOUCH_X1,TOUCH_X2,TOUCH_Y1,TOUCH_Y2);
 }
 bool touch_poll(touch_sample_t *sample)
 {
     if(!sample)return false;
-    static bool active;
-    static uint32_t last_sample_ms;
-    static int last_x,last_y;
-    uint32_t now=to_ms_since_boot(get_absolute_time());
-    if((uint32_t)(now-last_sample_ms)<30)return false;
-    last_sample_ms=now;
-    bool down=is_pressed();
+    uint32_t now=now_ms();
+    if((uint32_t)(now-s_last_poll_ms)<POLL_INTERVAL_MS)return false;
+    s_last_poll_ms=now;
+    uint32_t y1_level;
+    bool down=sense_pressed(&y1_level);
     if(down){
-        int x=read_axis(TOUCH_X1,TOUCH_X2,TOUCH_Y1);
-        int y=read_axis(TOUCH_Y1,TOUCH_Y2,TOUCH_X1);
-        down=is_pressed();
-        if(down){last_x=x;last_y=y;active=true;}
-    }
-    if(!down && active){
-        active=false;
-        *sample=(touch_sample_t){.raw_x=last_x,.raw_y=last_y,.pressed=false};
-        return true;
+        s_release_count=0;
+        if(s_press_count<PRESS_DEBOUNCE)s_press_count++;
+        if(!s_active && s_press_count>=PRESS_DEBOUNCE){
+            s_active=true;
+            s_sum_x=s_sum_y=s_points=0;
+            s_gesture_start=now;
+            s_last_raw_log=0;
+            ++s_gesture_id;
+            printf("[TOUCH DOWN] gesture=%lu at %lums Y1_pullup=%lu\n",
+                   (unsigned long)s_gesture_id,(unsigned long)now,(unsigned long)y1_level);
+        }
+        if(s_active){
+            int raw_x=read_axis(TOUCH_X1,TOUCH_X2,TOUCH_Y1);
+            int raw_y=read_axis(TOUCH_Y1,TOUCH_Y2,TOUCH_X1);
+            s_sum_x+=(uint32_t)raw_x;
+            s_sum_y+=(uint32_t)raw_y;
+            ++s_points;
+            if(s_verbose && (!s_last_raw_log || (uint32_t)(now-s_last_raw_log)>=RAW_REPORT_MS)){
+                printf("[TOUCH RAW] gesture=%lu ADC_X=%d ADC_Y=%d n=%lu hold=%lums\n",
+                       (unsigned long)s_gesture_id,raw_x,raw_y,
+                       (unsigned long)s_points,(unsigned long)(now-s_gesture_start));
+                s_last_raw_log=now;
+            }
+        }
+    }else{
+        s_press_count=0;
+        if(s_active){
+            if(s_release_count<RELEASE_DEBOUNCE)s_release_count++;
+            if(s_release_count>=RELEASE_DEBOUNCE){
+                s_active=false;
+                s_release_count=0;
+                if(!s_points){
+                    puts("[TOUCH WARN] gesture had no valid ADC samples");
+                    return false;
+                }
+                *sample=(touch_sample_t){
+                    .raw_x=(int)(s_sum_x/s_points),
+                    .raw_y=(int)(s_sum_y/s_points),
+                    .pressed=false
+                };
+                printf("[TOUCH UP] gesture=%lu rawAverage=(%d,%d) samples=%lu duration=%lums\n",
+                       (unsigned long)s_gesture_id,sample->raw_x,sample->raw_y,
+                       (unsigned long)s_points,(unsigned long)(now-s_gesture_start));
+                return true;
+            }
+        }else if(s_verbose && (uint32_t)(now-s_last_idle)>=3000u){
+            printf("[TOUCH IDLE] no press, Y1_pullup=%lu uptime=%lums (touch and hold a calibration cross)\n",
+                   (unsigned long)y1_level,(unsigned long)now);
+            s_last_idle=now;
+        }
     }
     return false;
 }
-static int clamp(int v,int a,int b){return v<a?a:(v>b?b:v);}
-static int map_axis(int v,int v0,int v1,int p0,int p1,int max)
+static int clamp_i(int v,int lo,int hi){return v<lo?lo:(v>hi?hi:v);}
+static int map_axis(int v,int raw0,int raw1,int screen0,int screen1,int max)
 {
-    int d=v1-v0;if(abs(d)<100)return 0;
-    return clamp(p0+(int)((int64_t)(v-v0)*(p1-p0)/d),0,max);
+    int span=raw1-raw0;
+    if(abs(span)<100)return 0;
+    return clamp_i(screen0+(int)((int64_t)(v-raw0)*(screen1-screen0)/span),0,max);
 }
-void touch_calibration_map(const touch_calibration_t *cal,int raw_x,int raw_y,int *x,int *y)
+void touch_calibration_map(const touch_calibration_t *c,int raw_x,int raw_y,int *x,int *y)
 {
-    if(!cal||!x||!y)return;
-    *x=map_axis(raw_x,cal->left,cal->right,45,435,479);
-    *y=map_axis(raw_y,cal->top,cal->bottom,70,210,271);
+    if(!c||!x||!y)return;
+    *x=map_axis(raw_x,c->left,c->right,45,435,479);
+    *y=map_axis(raw_y,c->top,c->bottom,70,210,271);
 }
-bool touch_calibration_make(const touch_sample_t samples[5],touch_calibration_t *out)
+bool touch_calibration_make(const touch_sample_t s[5],touch_calibration_t *out)
 {
-    if(!samples||!out)return false;
+    if(!s||!out)return false;
+    for(int i=0;i<5;++i)
+        printf("[CAL] sample[%d] raw X=%d Y=%d\n",i+1,s[i].raw_x,s[i].raw_y);
     *out=(touch_calibration_t){
         .magic=CAL_MAGIC,
-        .left=(samples[0].raw_x+samples[3].raw_x)/2,
-        .right=(samples[1].raw_x+samples[2].raw_x)/2,
-        .top=(samples[0].raw_y+samples[1].raw_y)/2,
-        .bottom=(samples[2].raw_y+samples[3].raw_y)/2,
+        .left=(s[0].raw_x+s[3].raw_x)/2,
+        .right=(s[1].raw_x+s[2].raw_x)/2,
+        .top=(s[0].raw_y+s[1].raw_y)/2,
+        .bottom=(s[2].raw_y+s[3].raw_y)/2,
     };
     out->checksum=cal_crc(out);
-    if(!cal_valid(out))return false;
+    int dx=out->right-out->left,dy=out->bottom-out->top;
+    printf("[CAL] endpoint X=%ld..%ld (signed span %d), Y=%ld..%ld (signed span %d)\n",
+           (long)out->left,(long)out->right,dx,
+           (long)out->top,(long)out->bottom,dy);
+    if(!cal_valid(out,true)){
+        puts("[CAL ERROR] raw axis outside 0..4095 or |span|<700. Check TOUCH1/3/2/4 wiring.");
+        return false;
+    }
     int x,y;
-    touch_calibration_map(out,samples[4].raw_x,samples[4].raw_y,&x,&y);
-    return abs(x-240)<=65 && abs(y-136)<=50;
+    touch_calibration_map(out,s[4].raw_x,s[4].raw_y,&x,&y);
+    printf("[CAL] center measured screen=(%d,%d), expected=(240,136), delta=(%d,%d), tolerance=(65,50)\n",
+           x,y,abs(x-240),abs(y-136));
+    if(abs(x-240)>65||abs(y-136)>50){
+        puts("[CAL ERROR] center verification failed; check sensor axis/order or cross placement.");
+        return false;
+    }
+    puts("[CAL] all five points validated");
+    return true;
 }

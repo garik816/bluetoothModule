@@ -150,16 +150,84 @@ void touch_init(void)
     printf("[TOUCH] polling=%ums debounce press=%u release=%u samples=%u\n",
            POLL_INTERVAL_MS,PRESS_DEBOUNCE,RELEASE_DEBOUNCE,AXIS_SAMPLES);
 }
+/* Detect resistive film pairs WITHOUT a press.
+ * Drive one terminal low; weak internal pull-up on the other. A matching
+ * electrode pair pulls the input low even when the screen is untouched.
+ * Use both directions to reduce false detections from stray leakage. */
+static bool electrode_pair_connected(uint a,uint b)
+{
+    unsigned low_ab=0,low_ba=0;
+    for(int direction=0;direction<2;++direction){
+        uint drive_pin=direction?b:a;
+        uint input_pin=direction?a:b;
+        release_all();
+        drive(drive_pin,false);
+        gpio_pull_up(input_pin);
+        busy_wait_us_32(600);
+        for(int i=0;i<6;++i){
+            if(!gpio_get(input_pin)){
+                if(direction)++low_ba;
+                else ++low_ab;
+            }
+            busy_wait_us_32(100);
+        }
+    }
+    release_all();
+    return low_ab>=5 && low_ba>=5;
+}
+static void electrode_pair_scan(void)
+{
+    const uint pins[4]={TOUCH_X1,TOUCH_X2,TOUCH_Y1,TOUCH_Y2};
+    const int connector[4]={30,31,32,33};
+    const char *const labels[4]={"TOUCH1","TOUCH3","TOUCH2","TOUCH4"};
+    bool pair[4][4]={{false}};
+    unsigned count=0;
+    puts("[PAIR PROBE] screen RELEASED: detecting conductive electrode pairs via weak internal pull-up");
+    for(int i=0;i<4;++i){
+        for(int j=i+1;j<4;++j){
+            pair[i][j]=electrode_pair_connected(pins[i],pins[j]);
+            if(pair[i][j])++count;
+            printf("[PAIR PROBE] LCD#%d %s GP%d <-> LCD#%d %s GP%d : %s\n",
+                   connector[i],labels[i],pins[i],connector[j],labels[j],pins[j],
+                   pair[i][j]?"CONDUCTIVE":"OPEN");
+        }
+    }
+    if(count==2 && pair[0][1] && pair[2][3]){
+        puts("[PAIR RESULT] expected X=LCD#30-#31 and Y=LCD#32-#33: electrical pairing OK.");
+        puts("[PAIR RESULT] if ADC0 Y stays near 4095, verify analog contact, ADC GP26 and supply.");
+    }else if(count==2 && pair[0][2] && pair[1][3]){
+        puts("[PAIR RESULT] MISMATCH: films are LCD#30-#32 (TOUCH1/2), LCD#31-#33 (TOUCH3/4).");
+        puts("[PAIR FIX] Swap display leads LCD#31 and LCD#32 at Pico end:");
+        puts("[PAIR FIX] LCD#31 TOUCH3 -> GP27; LCD#32 TOUCH2 -> GP20.");
+        puts("[PAIR FIX] Keep LCD#30 -> GP26 and LCD#33 -> GP21. Do not change firmware GPIO map.");
+    }else if(count==2 && pair[0][3] && pair[1][2]){
+        puts("[PAIR RESULT] alternate film pairs LCD#30-#33 and LCD#31-#32.");
+        puts("[PAIR RESULT] check ohmmeter; pin reassignment would be required.");
+    }else{
+        printf("[PAIR RESULT] AMBIGUOUS: %u conductive pairs (expected exactly 2).\n",count);
+        puts("[PAIR RESULT] release all fingers, verify no short/bridge, run 'p' again.");
+        puts("[PAIR RESULT] alternatively, ohmmeter: each film is a resistance between two pins at rest.");
+    }
+}
 void touch_debug_probe(void)
 {
-    uint32_t digital;
+    uint32_t digital=1;
     bool pressed=sense_pressed(&digital);
-    int raw_x=read_axis(TOUCH_X1,TOUCH_X2,TOUCH_Y1);
-    int raw_y=read_axis(TOUCH_Y1,TOUCH_Y2,TOUCH_X1);
-    printf("[TOUCH PROBE] Y1_pullup=%lu pressed=%d Xraw(ADC1 GP%d)=%d Yraw(ADC0 GP%d)=%d\n",
-           (unsigned long)digital,pressed,TOUCH_Y1,raw_x,TOUCH_X1,raw_y);
-    printf("[TOUCH PROBE] pin map: #30 TOUCH1=GP%d #31 TOUCH3=GP%d #32 TOUCH2=GP%d #33 TOUCH4=GP%d\n",
+    printf("[TOUCH PROBE] Y1_pullup=%lu pressed=%d\n",
+           (unsigned long)digital,pressed);
+    printf("[TOUCH PROBE] LCD#30 TOUCH1=GP%d (ADC0), #31 TOUCH3=GP%d, "
+           "#32 TOUCH2=GP%d (ADC1), #33 TOUCH4=GP%d\n",
            TOUCH_X1,TOUCH_X2,TOUCH_Y1,TOUCH_Y2);
+    if(pressed){
+        int x=read_axis(TOUCH_X1,TOUCH_X2,TOUCH_Y1);
+        int y=read_axis(TOUCH_Y1,TOUCH_Y2,TOUCH_X1);
+        int y_reverse=read_axis(TOUCH_Y2,TOUCH_Y1,TOUCH_X1);
+        printf("[TOUCH PROBE] PRESSED: ADC1/GP%d X=%d, ADC0/GP%d Y=%d, Y-reverse-drive=%d\n",
+               TOUCH_Y1,x,TOUCH_X1,y,y_reverse);
+        puts("[TOUCH PROBE] release the screen and press 'p' again for film pair test.");
+    }else{
+        electrode_pair_scan();
+    }
 }
 bool touch_poll(touch_sample_t *sample)
 {
@@ -254,7 +322,14 @@ bool touch_calibration_make(const touch_sample_t s[5],touch_calibration_t *out)
            (long)out->left,(long)out->right,dx,
            (long)out->top,(long)out->bottom,dy);
     if(!cal_valid(out,true)){
-        puts("[CAL ERROR] raw axis outside 0..4095 or |span|<700. Check TOUCH1/3/2/4 wiring.");
+        puts("[CAL ERROR] raw axis outside 0..4095 or |span|<700.");
+        if(abs(dy)<100 && out->top>3950 && out->bottom>3950){
+            puts("[CAL HINT] GP26/ADC0 is SATURATED near 4095 at all Y positions.");
+            puts("[CAL HINT] possible wrong electrical electrode pairing (#30/#32 vs #30/#31).");
+            puts("[CAL HINT] release finger, send 'p' in USB console to measure all 6 pairs.");
+        }else{
+            puts("[CAL HINT] inspect electrode pairing, raw samples and ADC wiring.");
+        }
         return false;
     }
     int x,y;

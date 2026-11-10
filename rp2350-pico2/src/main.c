@@ -142,6 +142,8 @@ static void on_touch(touch_sample_t sample)
             }else{
                 s_ui.cal_step=0;
                 printf("[CAL] REJECTED. Restarting at mark 1. See [CAL ERROR] lines.\n");
+                puts("[CAL] automatic film-pair diagnostic follows (keep finger off screen)...");
+                touch_debug_probe();
                 notice("ПОМИЛКА КАЛІБРУВАННЯ");
             }
         }
@@ -250,7 +252,7 @@ int main(void)
 #endif
         int ch=getchar_timeout_us(0);
         if(ch=='h'||ch=='H') {
-            puts("[USB] h help | p electrode/ADC probe | c redo 5-point calibration | d toggle raw logging | v version");
+            puts("[USB] h help | p electrode-pair probe (finger off) | c redo 5-point calibration | d toggle raw logging | v version");
         } else if(ch=='p'||ch=='P') {
             touch_debug_probe();
         } else if(ch=='c'||ch=='C') {

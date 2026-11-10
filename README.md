@@ -1,4 +1,4 @@
-# BluetoothModule — RP2350 Pico 2 + FSA506 + KCX_BT_EMITTER
+# universal bluetooth module — RP2350 Pico 2 + FSA506 + KCX_BT_EMITTER
 
 **Актуальна апаратна платформа:** звичайна **Raspberry Pi Pico 2 (RP2350A)** без Ethernet, дисплей **FSA506 480×272** з резистивним Touch і **KCX_BT_EMITTER v1.7**. Код прошивки — [`rp2350-pico2/src/`](rp2350-pico2/src/); збірка — [`rp2350-pico2/CMakeLists.txt`](rp2350-pico2/CMakeLists.txt). Окрема інструкція — [`rp2350-pico2/README.md`](rp2350-pico2/README.md).
 
@@ -23,6 +23,24 @@ Raspberry Pi Pico 2 (RP2350A)
 ```
 
 Pico 2 **не виконує кодування Bluetooth-аудіо**: звук іде безпосередньо до KCX, а RP2350 керує пошуком/сполученням та екраном.
+
+## Тимчасовий режим діагностики Touch
+
+У поточній прошивці `MODULE_KCX_ENABLED=OFF` за замовчуванням. **KCX повністю вимкнено**: UART0/MODE не ініціалізуються, жодні AT-команди не відправляються, Bluetooth не опитується. Це дозволяє перевіряти дисплей та 4-провідний сенсор без підключеного KCX.
+
+На дисплеї заголовок **`universal bluetooth module v.<version>`**. Версія генерується автоматично **при кожній збірці**, включно з повторним `cmake --build` без змін коду. У CI використовується номер `GITHUB_RUN_NUMBER` (наприклад, `0.2.14`), локально — лічильник у `build-pico2/generated/build_version.count`.
+
+### USB-діагностика (COM-порт Pico 2)
+
+```powershell
+python -m serial.tools.miniterm COM22 115200
+```
+
+В журналі: `[BOOT]`, `[TOUCH DOWN]`, `[TOUCH RAW]`, `[TOUCH UP]`, `[CAL]`, `[CAL ERROR]`, `[CAL STORAGE]`, `[HEARTBEAT]`. Стан ADC виводиться щонайменше кожні 200 мс під час тривалого дотику; 5 точок калібрування перевіряються окремо із поясненням відмови.
+
+Команди в USB-терміналі: `p` — одинична перевірка електродів/ADC, `c` — калібрувати заново, `d` — детальний RAW-лог ON/OFF, `h` — допомога, `v` — версія.
+
+**Вмикання KCX пізніше:** `cmake -S rp2350-pico2 -B build-pico2 -DMODULE_KCX_ENABLED=ON`, потім `cmake --build build-pico2`. GPIO залишаються як у таблиці нижче.
 
 ## Роз'єм FSA506 / дисплея (40 контактів)
 

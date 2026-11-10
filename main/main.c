@@ -1,7 +1,7 @@
 /*
  * BluetoothModule: ESP32-S3 + FSA506 480x272 + KCX_BT_EMITTER v1.7
  * Main UI (one FreeRTOS task), UART RX (separate task), resistive touch (task).
- * Original FSA506/touch electrical timings sourced from Silvus Configurator.
+ * FSA506 LCD timings and resistive Touch GPIO mappings are local to this firmware.
  */
 #include <stdbool.h>
 #include <stdint.h>

@@ -1,5 +1,5 @@
 /*
- * Adaptation of Silvus 4-wire resistive touchscreen algorithm to Pico SDK.
+ * Four-wire resistive touchscreen driver for Pico SDK and RP2350 ADC.
  * X1=GP26/ADC0, Y1=GP27/ADC1; X2=GP20, Y2=GP21.
  * Records 5-point calibration in reserved LAST 4096-byte flash sector.
  * Configure app / linker to leave that sector unused (see CMake file).

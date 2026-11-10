@@ -1,6 +1,5 @@
 /*
- * FSA506 480x272 i80 driver, adapted from Silvus Configurator
- * hw/esp32s3-fsa506 (original fsa506_status.c).
+ * FSA506 480x272 parallel 8080 RGB565 display driver.
  * Reuses verified timings / DMA tiled draw / 5x7 glyph primitives.
  */
 #include "ui_display.h"
@@ -198,7 +197,7 @@ static bool on_transfer_done(esp_lcd_panel_io_handle_t io,
 
 /*
  * Bench pattern: eight color columns, position markers and text.
- * This runs once and persists while Silvus continues running.
+ * This diagnostic runs once and leaves the rendered pattern visible.
  * It does not write to any radio registers.
  */
 static bool submit_tile(int y, int bottom)

@@ -1,5 +1,5 @@
 /*
- * Adapted from Silvus Configurator hw/esp32s3-fsa506.
+ * Four-wire resistive Touch GPIO/ADC driver for FSA506.
  * Ampire FSA506 board: 4-wire resistive touch without SPI controller.
  * FFC30=X1, FFC31=X2, FFC32=Y1, FFC33=Y2 is based on the related Ampire H3
  * datasheet; pad numbering is user-confirmed, electrode pairs need ohmmeter QA.

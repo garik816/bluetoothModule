@@ -1,6 +1,5 @@
 /*
- * FSA506 480x272 8080/RGB565 timings adapted from Silvus Configurator
- * hw/esp32s3-fsa506: fsa506_status.c (H525/V286 falling edge, GRAM Y544).
+ * FSA506 480x272 8080/RGB565 timing: H525/V286, GRAM Y544.
  * RP2350 PIO0 SM0, one DMA 32-bit word per LCD bus byte.
  */
 #include "fsa506.h"

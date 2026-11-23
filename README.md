@@ -1,19 +1,56 @@
-# universal bluetooth module — RP2350 Pico 2
+# Universal Bluetooth Module — Raspberry Pi Pico 2 (RP2350)
 
-**Актуальна гілка:** `hw/rp2350-pico2`. **Поточна конфігурація:** Raspberry Pi Pico 2 (RP2350A), FSA506 480×272 (PIO/DMA, 8-bit 8080), KCX_BT_EMITTER v1.7 (UART0 115200).
+**Актуальна апаратна конфігурація:** Raspberry Pi Pico 2 / RP2350A + **KCX_BT_EMITTER v1.7** + дисплей **FSA506 480×272**. Режим Bluetooth TX встановлюється фізичною перемичкою KCX. Pico 2 керує модулем через UART0 115200, відображає стан на FSA506 та приймає команди через USB CDC.
 
-**Touch і калібрування повністю видалені.** KCX увімкнено з запуску, а режим Bluetooth TX обирається апаратною перемичкою на модулі; GP15 у прошивці не використовується. Функції пошуку та підключення доступні через USB CDC.
+**Touch вимкнений:** усі операції виконуються через новий Windows GUI або USB-консоль. Bluetooth-аудіо передається безпосередньо з аналогового LINE OUT магнітоли на KCX і не проходить через Pico 2.
 
-Основна інструкція (розпайка 40-контактного дисплея, KCX, логи й команди): **[rp2350-pico2/README.md](rp2350-pico2/README.md)**.
+## Що працює у проєкті
 
-## Основні команди через USB
+- **Windows GUI:** вибір COM, живий журнал команд і відповідей UART, пошук Bluetooth-пристроїв, вибір/підключення, статус, вимкнення зв'язку, керування автопідключенням; готовий однофайловий EXE збирається в GitHub Actions.
+- **Екран FSA506:** бобінний магнітофон (анімація двох катушок із стрічкою) займає **0–215 px**, компактна **статусна панель 216–271 px** показує BT, LINK, AUTO, KCX, підключений пристрій/останній MAC і версію. Під час підключення бобіни обертаються, без зв'язку — зупинені. Командами GUI можна переключити екран на список.
+- **Автоматичне відновлення:** Pico 2 читає збережений KCX `Last_Add`, чекає на штатне підключення й за необхідності перезапускає рідний алгоритм KCX з паузами. Попередні адреси в автоматичному режимі не стираються.
+- **UF2:** автоматична збірка з Pico SDK 2.3.1; файл можна скопіювати на Pico 2 у режимі BOOTSEL.
+
+## Запуск Windows GUI
+
+**Без Python:** відкрий [Windows Bluetooth GUI — Actions](https://github.com/garik816/bluetoothModule/actions/workflows/gui-windows.yml), останній успішний запуск, унизу **Artifacts**, завантаж `BluetoothModule-Pico2-Windows-GUI`, розпакуй і запусти `BluetoothModule-Pico2-GUI.exe`.
+
+**З вихідних кодів у PowerShell:**
 
 ```powershell
-python -m serial.tools.miniterm COM22 115200
+git clone -b hw/rp2350-pico2 https://github.com/garik816/bluetoothModule.git
+cd bluetoothModule
+py -3 -m pip install -r rp2350-pico2/tools/gui/requirements.txt
+py -3 rp2350-pico2/tools/gui/desktop_gui.py
 ```
 
-Введіть `help`, `status`, `ping`, `version`, `scan`, `devices`, `select 1`, `connect CONFIRM`, `drop`, `redraw` (Enter після кожної команди). `scan` може автоматично під'єднати навушники, а `connect CONFIRM` видаляє раніше збережені адреси KCX.
+Після відкриття обери **COM-порт Pico 2 → Підключити → Пошук**. Обери пристрій у списку й натисни **Підключити вибраний**. Підтвердження обов'язкове, оскільки ця ручна дія стирає старі збережені Bluetooth-адреси в KCX. Для вже відомого пристрою можна спочатку спробувати **Авто ЗАРАЗ**, не стираючи пам'яті.
 
-**Прошивка:** [GitHub Actions — RP2350 Pico 2 UF2](https://github.com/garik816/bluetoothModule/actions/workflows/pico2.yml), артефакт `bluetoothModule-RP2350-Pico2-UF2`. Номер версії збільшується при кожній збірці.
+## UF2 прошивка
 
-Код у [`rp2350-pico2/src/`](rp2350-pico2/src/). Дисплейний драйвер `fsa506.c` та PIO програма `fsa506.pio` залишені без змін від збірки, яка вже показувала зображення. Нова інтеграція KCX вимагає стендової перевірки.
+[RP2350 Pico 2 UF2 — GitHub Actions](https://github.com/garik816/bluetoothModule/actions/workflows/pico2.yml) → **Artifacts** → `bluetoothModule-RP2350-Pico2-UF2` → `bluetooth_module_pico2.uf2`.
+
+Утримуючи **BOOTSEL**, під'єднай Pico 2 USB-кабелем до ПК і скопіюй UF2 на диск **RP2350**.
+
+## USB-команди (якщо GUI не використовується)
+
+```powershell
+python -m serial.tools.miniterm COM22 115200 --echo
+```
+
+Замінити `COM22` на фактичний номер USB CDC. Використовуй `status`, `auto status`, `auto on`, `auto off`, `auto now`, `scan`, `devices`, `select N`, `connect CONFIRM`, `drop`, `view main`, `view list`, `next`, `redraw`, `help`.
+
+**KCX v1.7:** `AT+SCAN` ненадійний, тому `scan` використовує `AT+PAIR` і може автоматично з'єднатися під час пошуку. `connect CONFIRM` **видаляє весь попередній KCX список пар**.
+
+## Усунення аудіошуму на перевіреному KCX v1.7
+
+На реальній платі сильні шуми залишалися навіть із лабораторним блоком живлення та при відключених аудіопроводах. **Коротка перемичка `AGND ↔ PGND` безпосередньо на KCX повністю прибрала шум.** Залиш перемичку постійно; діагностичні резистори 100 Ом з аудіовходів зніми перед звичайним використанням. Подавати вихід підсилювача динаміків безпосередньо на AUDIO_L/R не можна: використовуй LINE OUT або відповідний адаптер.
+
+## Документація та вихідний код
+
+- **[Детальна інструкція Pico 2](rp2350-pico2/README.md)** — розпайка 40-контактного FSA506, підключення KCX, автоз'єднання, протокол, схема, збірка та безпека.
+- [Windows GUI на Python](rp2350-pico2/tools/gui/desktop_gui.py).
+- [Прошивка Pico 2](rp2350-pico2/src/).
+- [GitHub Actions для UF2](.github/workflows/pico2.yml) та [Windows EXE](.github/workflows/gui-windows.yml).
+
+*Це апаратний прототип. Коректність компіляції перевіряється CI; швидкість відтворення анімації й стабільність перепідключення KCX потребують перевірки на реальному стенді.*

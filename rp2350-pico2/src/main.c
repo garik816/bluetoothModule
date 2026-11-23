@@ -173,7 +173,7 @@ static void periodic(void)
 /* A line-based USB CDC console replaces the broken resistive touch panel. */
 static char s_cmd[100];
 static size_t s_cmd_len;
-static uint32_t s_last_heartbeat, s_last_draw;
+static uint32_t s_last_heartbeat, s_last_draw, s_last_anim;
 static bool s_warned_silent;
 static void show_devices(void)
 {
@@ -221,7 +221,9 @@ static void show_help(void)
     puts("[USB] auto status      | saved last MAC / retry counter");
     puts("[USB] auto on/off     | allow/block background reconnection");
     puts("[USB] auto now        | retry last peer using non-destructive KCX reset");
-    puts("[USB] next             | next display page");
+    puts("[USB] view main        | animated reel-to-reel screen");
+    puts("[USB] view list        | device list on LCD");
+    puts("[USB] next             | next page of LCD device list");
     puts("[USB] redraw           | redraw current LCD screen");
     puts("[USB] rawstatus        | KCX AT+BT_MODE? and AT+STATUS?");
     puts("[USB] No touch/calibration, no GP15 MODE output. Use KCX TX jumper.");
@@ -291,9 +293,18 @@ static void process_command(const char *line)
             (void)kcx_uart_send("AT+DISCON");
             notice("ВІДКЛЮЧЕНО / АВТО НА ПАУЗІ");
         }
+    }else if(!strcmp(line,"view main")){
+        s_ui.show_list=false;
+        s_changed=true;
+        puts("[UI] Tape animation");
+    }else if(!strcmp(line,"view list")){
+        s_ui.show_list=true;
+        s_changed=true;
+        puts("[UI] Bluetooth device list");
     }else if(!strcmp(line,"next")){
         int pages=(int)((s_ui.bt.device_count+3u)/4u);
         s_ui.page=pages?(s_ui.page+1)%pages:0;
+        s_ui.show_list=true;
         s_changed=true;
         printf("[UI] page=%d/%d\n",s_ui.page+1,pages?pages:1);
     }else if(!strcmp(line,"redraw")){
@@ -327,13 +338,14 @@ int main(void)
     sleep_ms(500);
     printf("\n[BOOT] universal bluetooth module v.%s\n",FIRMWARE_VERSION);
     puts("[BOOT] Raspberry Pi Pico 2 + FSA506 + KCX_BT_EMITTER v1.7");
-    puts("[BOOT] touch=REMOVED; calibration=REMOVED; existing LCD PIO/DMA driver UNCHANGED");
+    puts("[BOOT] touch=REMOVED; FSA506=PICO2 PIO/DMA tape animation + bottom status");
     puts("[BOOT] KCX UART0 115200 ON: GP0 TX -> KCX RX; GP1 RX <- KCX TX");
     puts("[BOOT] KCX TX/RX mode is selected by PCB jumper. GP15 is UNUSED.");
     kcx_state_init(&s_ui.bt);
     kcx_auto_init(&s_auto,clock_ms());
     s_ui.auto_enabled=true;
     s_ui.selected=-1;
+    s_ui.show_list=false;
     notice("ЗАПУСК BLUETOOTH");
     puts("[LCD] FSA506 init...");
     if(!fsa_init()){
@@ -344,6 +356,7 @@ int main(void)
     if(!ui_draw(&s_ui))puts("[LCD ERROR] first frame failed");
     else puts("[LCD] first screen rendered");
     s_last_draw=clock_ms();
+    s_last_anim=s_last_draw;
     puts("[KCX] initializing UART0...");
     kcx_uart_init(on_line);
     (void)kcx_uart_send("AT+");
@@ -378,11 +391,19 @@ int main(void)
             puts("[WARN] KCX RX silent: check 5V PGND, TX->GP1, RX<-GP0, UART levels.");
             notice("KCX НЕ ВІДПОВІДАЄ UART");
         }
-        if(s_changed&&(uint32_t)(now-s_last_draw)>=120u){
+        /* ~5 fps reel rotation; tile DMA is blocking so USB RX uses IRQ ring. */
+        if((uint32_t)(now-s_last_anim)>=180u){
+            s_last_anim=now;
+            if(!s_ui.show_list &&
+               (s_ui.bt.connected||s_ui.bt.scanning||s_ui.busy)){
+                s_ui.anim_frame+=(s_ui.bt.scanning||s_ui.busy)?2u:1u;
+                s_changed=true;
+            }
+        }
+        if(s_changed&&(uint32_t)(now-s_last_draw)>=160u){
             s_changed=false;
             s_last_draw=now;
-            bool ok=ui_draw(&s_ui);
-            printf("[LCD] draw %s\n",ok?"OK":"FAILED");
+            if(!ui_draw(&s_ui))puts("[LCD ERROR] frame failed");
         }
         sleep_ms(5);
     }

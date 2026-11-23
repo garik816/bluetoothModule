@@ -187,6 +187,7 @@ static void roller(int x,int y,int tile)
 }
 static void tape_heads(int tile)
 {
+    (void)tile; /* fsa_rect clips to the 8-line tile automatically. */
     /* Polished erase/record/playback head assembly and tape guides. */
     fsa_rect(204,183,74,25,RIM_DARK);
     fsa_rect(205,184,72,21,ALLOY_DARK);

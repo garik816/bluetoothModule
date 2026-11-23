@@ -19,6 +19,8 @@ add_executable(bluetooth_module_pico2
     src/fsa506.c
     src/font.c
     src/ui.c
+    src/reel_view.c
+    src/reel_motion.c
     src/kcx_uart.c
     src/kcx_protocol.c
     src/kcx_auto.c

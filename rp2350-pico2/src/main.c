@@ -346,6 +346,7 @@ int main(void)
     s_ui.auto_enabled=true;
     s_ui.selected=-1;
     s_ui.show_list=false;
+    reel_motion_init(&s_ui.reels);
     notice("ЗАПУСК BLUETOOTH");
     puts("[LCD] FSA506 init...");
     if(!fsa_init()){
@@ -391,16 +392,17 @@ int main(void)
             puts("[WARN] KCX RX silent: check 5V PGND, TX->GP1, RX<-GP0, UART levels.");
             notice("KCX НЕ ВІДПОВІДАЄ UART");
         }
-        /* ~5 fps reel rotation; tile DMA is blocking so USB RX uses IRQ ring. */
-        if((uint32_t)(now-s_last_anim)>=180u){
+        /* Reels spin ONLY if KCX reports BT_LINK=YES. Searching, pairing
+           and waiting are stationary. Their angular speeds differ with wind
+           radius; both turn CCW during simulated forward transport. */
+        if((uint32_t)(now-s_last_anim)>=160u){
             s_last_anim=now;
-            if(!s_ui.show_list &&
-               (s_ui.bt.connected||s_ui.bt.scanning||s_ui.busy)){
-                s_ui.anim_frame+=(s_ui.bt.scanning||s_ui.busy)?2u:1u;
+            if(!s_ui.show_list && s_ui.bt.connected){
+                reel_motion_tick(&s_ui.reels,true);
                 s_changed=true;
             }
         }
-        if(s_changed&&(uint32_t)(now-s_last_draw)>=160u){
+        if(s_changed&&(uint32_t)(now-s_last_draw)>=150u){
             s_changed=false;
             s_last_draw=now;
             if(!ui_draw(&s_ui))puts("[LCD ERROR] frame failed");

@@ -32,6 +32,15 @@ int main(void)
     assert(!(kcx_parse_line(&s,"OK+STATUS:1")&KCX_EVENT_LINK));
     assert(kcx_parse_line(&s,"OK+STATUS:0")&KCX_EVENT_LINK);
     assert(!s.connected && s.connected_mac[0]=='\0');
+    assert(strcmp(s.last_mac,"6e73594c1838")==0);
+    assert(kcx_parse_line(&s,"OK+VMLINK")&KCX_EVENT_READY);
+    assert(kcx_parse_line(&s,"Last_Add=0xDEADBEEF0001")&KCX_EVENT_SAVED);
+    assert(strcmp(s.last_mac,"deadbeef0001")==0);
+    assert(kcx_parse_line(&s,"Last_Add=0xDEADBEEF0001")==KCX_EVENT_NONE);
+    assert(kcx_parse_line(&s,"Last_Add=invalid")==KCX_EVENT_NONE);
+    assert(strcmp(s.last_mac,"deadbeef0001")==0);
+    assert(kcx_parse_line(&s,"VM_MacAdd0=0xaaaaaaaaaaaa")==KCX_EVENT_NONE);
+    assert(strcmp(s.last_mac,"deadbeef0001")==0);
 
     kcx_scan_clear(&s);
     assert(kcx_parse_line(&s,"MacAdd:0xF44EFDECD39D")&KCX_EVENT_DEVICE);
@@ -48,6 +57,7 @@ int main(void)
     assert(kcx_parse_line(&s,"OK+VERS:KCX_BT_RTX_V1.7")&KCX_EVENT_VERSION);
     assert(strcmp(s.version,"KCX_BT_RTX_V1.7")==0);
     assert(kcx_parse_line(&s,"Delete_Vmlink")&KCX_EVENT_ERASE_ACK);
+    assert(s.last_mac[0]=='\0');
     assert(kcx_parse_line(&s,"OK+ADDLINKADD=123456789abc")&KCX_EVENT_ADD_ACK);
 
     assert(kcx_parse_line(&s,"CMD ERR!")&KCX_EVENT_ERROR);

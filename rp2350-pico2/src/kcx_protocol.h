@@ -29,6 +29,7 @@ typedef struct {
     char version[48];
     char connected_mac[KCX_MAC_LENGTH + 1];
     char connected_name[KCX_DEVICE_NAME_LENGTH];
+    char last_mac[KCX_MAC_LENGTH + 1]; /* NVM Last_Add from AT+VMLINK? */
 } kcx_state_t;
 
 enum {
@@ -42,6 +43,7 @@ enum {
     KCX_EVENT_ERROR       = 1u << 6,
     KCX_EVENT_MODE        = 1u << 7,
     KCX_EVENT_VERSION     = 1u << 8,
+    KCX_EVENT_SAVED       = 1u << 9,
 };
 
 void kcx_state_init(kcx_state_t *state);

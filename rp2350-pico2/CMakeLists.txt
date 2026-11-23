@@ -21,6 +21,7 @@ add_executable(bluetooth_module_pico2
     src/ui.c
     src/kcx_uart.c
     src/kcx_protocol.c
+    src/kcx_auto.c
 )
 set(FW_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/build_version.h")
 add_custom_target(firmware_version ALL

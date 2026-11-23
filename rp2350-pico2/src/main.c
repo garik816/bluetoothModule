@@ -14,6 +14,7 @@
 #include "ui.h"
 #include "kcx_uart.h"
 #include "kcx_protocol.h"
+#include "kcx_auto.h"
 #include "build_version.h"
 
 #define KCX_TIMEOUT_MS 5000u
@@ -30,6 +31,8 @@ static uint32_t s_last_status;
 static uint32_t s_scan_since;
 static char s_target_mac[13];
 static bool s_changed;
+static kcx_auto_t s_auto;
+static uint32_t s_kcx_refresh_due;
 static uint32_t s_heartbeat_ms;
 static const char *const s_scan_hint="ПОШУК / МОЖЛИВЕ АВТОЗЄДНАННЯ";
 
@@ -47,6 +50,7 @@ static void start_scan(void)
     s_ui.selected=-1;
     s_ui.page=0;
     s_scan_since=clock_ms();
+    kcx_auto_postpone(&s_auto,s_scan_since,KCX_AUTO_BOOT_GRACE_MS);
     notice(s_scan_hint);
     /* KCX v1.7 AT+SCAN is unreliable. AT+PAIR starts discovery but may
        auto-connect: discovery-only mode is not guaranteed by module FW. */
@@ -63,6 +67,9 @@ static void connect_selected(void)
     }
     snprintf(s_target_mac,sizeof(s_target_mac),"%s",
              s_ui.bt.devices[s_ui.selected].mac);
+    /* Explicit manual selection: do not retry during KCX NVM updates. */
+    kcx_auto_resume(&s_auto,clock_ms());
+    kcx_auto_postpone(&s_auto,clock_ms(),KCX_AUTO_RETRY_MS);
     /* This ERASES KCX's entire saved reconnect list. UI requires explicit
        row selection and a second CONNECT action before modifying it. */
     kcx_uart_send("AT+DISCON");
@@ -73,7 +80,24 @@ static void connect_selected(void)
 }
 static void on_line(const char *line)
 {
+    /* KCX V1.7 emits POWER ON after AT+RESET (or spontaneous restarts). */
+    if(!strcmp(line,"POWER ON")){
+        s_ui.bt.ready=false;
+        s_ui.bt.status_known=false;
+        s_ui.bt.connected=false;
+        s_ui.bt.connected_mac[0]=0;
+        s_ui.bt.connected_name[0]=0;
+        s_ui.bt.scanning=false;
+        kcx_auto_on_kcx_boot(&s_auto,clock_ms());
+        s_kcx_refresh_due=clock_ms()+1500u;
+        notice("KCX: ЗАПУСК, ШУКАЄМО ЗБЕРЕЖЕНЕ");
+        return;
+    }
     unsigned event=kcx_parse_line(&s_ui.bt,line);
+    if(event & KCX_EVENT_SAVED){
+        printf("[AUTO] KCX saved Last_Add=%s\n",s_ui.bt.last_mac);
+        s_changed=true;
+    }
     if(event && !s_ui.bt.ready)s_ui.bt.ready=true;
     if(event & KCX_EVENT_ERROR){
         if(s_op!=OP_IDLE){
@@ -99,6 +123,7 @@ static void on_line(const char *line)
         notice("ПІДКЛЮЧЕННЯ ВИБРАНОГО");
     }
     if(event & KCX_EVENT_LINK){
+        kcx_auto_on_link(&s_auto,clock_ms(),s_ui.bt.connected);
         if(s_op==OP_IDLE)
             notice(s_ui.bt.connected?"BLUETOOTH ПІДКЛЮЧЕНО":"BLUETOOTH ВІДКЛЮЧЕНО");
         else s_changed=true;
@@ -123,9 +148,25 @@ static void periodic(void)
         s_ui.bt.scanning=false;
         s_changed=true;
     }
+    if(s_kcx_refresh_due && (int32_t)(now-s_kcx_refresh_due)>=0){
+        s_kcx_refresh_due=0;
+        (void)kcx_uart_send("AT+BT_MODE?");
+        (void)kcx_uart_send("AT+VMLINK?");
+        (void)kcx_uart_send("AT+STATUS?");
+        s_last_status=now;
+    }
     if(s_op==OP_IDLE && (uint32_t)(now-s_last_status)>KCX_POLL_MS){
         kcx_uart_send("AT+STATUS?");
         s_last_status=now;
+    }
+    if(kcx_auto_should_retry(&s_auto,now,s_ui.bt.last_mac[0]!=0,
+                            s_ui.bt.ready,s_ui.bt.status_known,
+                            s_ui.bt.connected,s_ui.bt.mode_known,s_ui.bt.transmitter,
+                            s_op!=OP_IDLE,s_ui.bt.scanning)){
+        printf("[AUTO] Retry #%lu for saved MAC %s via KCX native boot\n",
+               (unsigned long)s_auto.attempts,s_ui.bt.last_mac);
+        (void)kcx_uart_send("AT+RESET");
+        notice("АВТОПОШУК ЗБЕРЕЖЕНОГО ПРИСТРОЮ");
     }
 }
 
@@ -156,6 +197,11 @@ static void show_status(void)
     if(s_ui.bt.connected&&s_ui.bt.connected_mac[0])
         printf("[BT PEER] name=%s MAC=%s\n",
                s_ui.bt.connected_name,s_ui.bt.connected_mac);
+    printf("[AUTO] %s%s last_MAC=%s retries=%lu next_ms=%lu\n",
+           s_auto.enabled?"ON":"OFF",s_auto.paused?" (PAUSED)":"",
+           s_ui.bt.last_mac[0]?s_ui.bt.last_mac:"UNKNOWN",
+           (unsigned long)s_auto.attempts,
+           (unsigned long)s_auto.next_attempt_ms);
     printf("[UART] UART0 115200 8N1 GP0->KCX RX GP1<-KCX TX rx_bytes=%lu lines=%lu overflow=%lu\n",
            (unsigned long)kcx_uart_rx_count(),
            (unsigned long)kcx_uart_line_count(),
@@ -171,7 +217,10 @@ static void show_help(void)
     puts("[USB] devices          | list devices received from KCX");
     puts("[USB] select N         | select 1-based device index");
     puts("[USB] connect CONFIRM  | ERASES KCX favorites, pairs selected MAC");
-    puts("[USB] drop             | send AT+DISCON");
+    puts("[USB] drop             | disconnect and PAUSE automatic retries");
+    puts("[USB] auto status      | saved last MAC / retry counter");
+    puts("[USB] auto on/off     | allow/block background reconnection");
+    puts("[USB] auto now        | retry last peer using non-destructive KCX reset");
     puts("[USB] next             | next display page");
     puts("[USB] redraw           | redraw current LCD screen");
     puts("[USB] rawstatus        | KCX AT+BT_MODE? and AT+STATUS?");
@@ -211,9 +260,37 @@ static void process_command(const char *line)
         puts("[WARNING] Confirm using: connect CONFIRM");
     }else if(!strcmp(line,"connect CONFIRM")){
         connect_selected();
+    }else if(!strcmp(line,"auto")||!strcmp(line,"auto status")){
+        show_status();
+    }else if(!strcmp(line,"auto on")){
+        kcx_auto_set_enabled(&s_auto,true,clock_ms());
+        s_ui.auto_enabled=true;s_ui.auto_paused=false;
+        notice("АВТОПІДКЛЮЧЕННЯ УВІМКНЕНО");
+    }else if(!strcmp(line,"auto off")){
+        kcx_auto_set_enabled(&s_auto,false,clock_ms());
+        s_ui.auto_enabled=false;
+        notice("АВТОПІДКЛЮЧЕННЯ ВИМКНЕНО");
+    }else if(!strcmp(line,"auto now")){
+        if(s_op!=OP_IDLE||s_ui.bt.scanning)puts("[AUTO] Busy: finish manual operation first.");
+        else if(s_ui.bt.connected)puts("[AUTO] Already connected; no reset.");
+        else if(s_ui.bt.mode_known&&!s_ui.bt.transmitter)puts("[AUTO] KCX is in receiver mode.");
+        else if(!s_ui.bt.last_mac[0])puts("[AUTO] No previous MAC in KCX; first pair manually.");
+        else{
+            kcx_auto_resume(&s_auto,clock_ms());
+            kcx_auto_mark_attempt(&s_auto,clock_ms());
+            printf("[AUTO] Manual retry for saved MAC %s\n",s_ui.bt.last_mac);
+            (void)kcx_uart_send("AT+RESET");
+            s_ui.auto_enabled=true;s_ui.auto_paused=false;
+            notice("ПОВТОРНЕ ЗЄДНАННЯ");
+        }
     }else if(!strcmp(line,"drop")||!strcmp(line,"disconnect")){
         if(s_op!=OP_IDLE)puts("[ERROR] Busy: connection operation in progress.");
-        else{(void)kcx_uart_send("AT+DISCON");notice("BLUETOOTH ВІДКЛЮЧЕННЯ");}
+        else{
+            kcx_auto_pause(&s_auto);
+            s_ui.auto_paused=true;
+            (void)kcx_uart_send("AT+DISCON");
+            notice("ВІДКЛЮЧЕНО / АВТО НА ПАУЗІ");
+        }
     }else if(!strcmp(line,"next")){
         int pages=(int)((s_ui.bt.device_count+3u)/4u);
         s_ui.page=pages?(s_ui.page+1)%pages:0;
@@ -254,6 +331,8 @@ int main(void)
     puts("[BOOT] KCX UART0 115200 ON: GP0 TX -> KCX RX; GP1 RX <- KCX TX");
     puts("[BOOT] KCX TX/RX mode is selected by PCB jumper. GP15 is UNUSED.");
     kcx_state_init(&s_ui.bt);
+    kcx_auto_init(&s_auto,clock_ms());
+    s_ui.auto_enabled=true;
     s_ui.selected=-1;
     notice("ЗАПУСК BLUETOOTH");
     puts("[LCD] FSA506 init...");
@@ -274,8 +353,12 @@ int main(void)
     (void)kcx_uart_send("AT+BT_MODE?");
     sleep_ms(120);
     (void)kcx_uart_send("AT+STATUS?");
+    sleep_ms(120);
+    (void)kcx_uart_send("AT+VMLINK?");
     s_last_status=clock_ms();
     s_last_heartbeat=clock_ms();
+    puts("[BOOT] auto reconnect is enabled; allow 60s for native KCX recovery.");
+    puts("[BOOT] AT+VMLINK? reads Last_Add; background retries use only AT+RESET.");
     puts("[BOOT] ready; enter 'help' in USB COM terminal.");
     show_help();
     for(;;){

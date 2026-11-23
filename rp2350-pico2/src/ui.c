@@ -47,6 +47,8 @@ static void draw_contents(const ui_state_t *ui)
     fsa_rect(0,226,480,46,NAVY);
     fsa_text(11,235,"USB: help  scan  devices  select N",1,WHITE);
     fsa_text(11,253,"connect CONFIRM  drop  redraw",1,WHITE);
+    fsa_text(349,253,!ui->auto_enabled?"AUTO:OFF":
+             ui->auto_paused?"AUTO:PAUSE":"AUTO:ON",1,WHITE);
 }
 bool ui_draw(const ui_state_t *ui)
 {

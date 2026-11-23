@@ -94,6 +94,7 @@ static unsigned track_device(kcx_state_t *s,const char *payload,bool is_connect)
         s->scanning=false;
         snprintf(s->connected_mac,sizeof(s->connected_mac),"%s",mac);
         snprintf(s->connected_name,sizeof(s->connected_name),"%s",s->devices[idx].name);
+        snprintf(s->last_mac,sizeof(s->last_mac),"%s",mac);
         if(changed)event|=KCX_EVENT_LINK;
     }
     return event;
@@ -116,6 +117,26 @@ unsigned kcx_parse_line(kcx_state_t *s,const char *line)
             snprintf(s->connected_name,sizeof(s->connected_name),"%s",d->name);
         s->pending_name_index=-1;
         return KCX_EVENT_DEVICE;
+    }
+    /* Last_Add is the last actually connected peer, not VM_MacAddN. */
+    const char *last=strstr(line,"Last_Add=");
+    if(last && (last==line || last[-1]==' ' || last[-1]==',')){
+        last+=9;
+        size_t length=strcspn(last,", \t\r\n");
+        if(length>0 && length<32){
+            char source[32],normalized[13];
+            memcpy(source,last,length);source[length]=0;
+            if(kcx_normalize_mac(source,normalized) &&
+               strcmp(normalized,"000000000000")!=0 &&
+               strcmp(normalized,"ffffffffffff")!=0){
+                s->ready=true;
+                if(strcmp(s->last_mac,normalized)!=0){
+                    memcpy(s->last_mac,normalized,sizeof(s->last_mac));
+                    return KCX_EVENT_SAVED;
+                }
+                return KCX_EVENT_NONE;
+            }
+        }
     }
     if(strncmp(line,"SCAN",4)==0||strncmp(line,"New Devices:",12)==0){
         s->scanning=true;
@@ -156,6 +177,7 @@ unsigned kcx_parse_line(kcx_state_t *s,const char *line)
     }
     if(strncmp(line,"Delete_Vmlink",13)==0){
         s->ready=true;
+        s->last_mac[0]=0;
         return KCX_EVENT_ERASE_ACK;
     }
     if(strncmp(line,"OK+ADDLINKADD",13)==0){

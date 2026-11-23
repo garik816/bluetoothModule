@@ -20,6 +20,10 @@ jobs:
             rp2350-pico2/tests/test_kcx_protocol.c rp2350-pico2/src/kcx_protocol.c \
             -o /tmp/kcx-pico2-protocol-test
           /tmp/kcx-pico2-protocol-test
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -I rp2350-pico2/src \
+            rp2350-pico2/tests/test_kcx_auto.c rp2350-pico2/src/kcx_auto.c \
+            -o /tmp/kcx-pico2-auto-test
+          /tmp/kcx-pico2-auto-test
       - name: Pico SDK 2.3.1
         uses: actions/checkout@v4
         with:

@@ -26,6 +26,8 @@ static void draw_contents(const ui_state_t *ui)
         ui->bt.connected?"ПІДКЛЮЧЕНО":
         ui->bt.scanning?"ПОШУК":"ГОТОВО";
     fsa_text(85,49,status,1,ui->bt.connected?GREEN:BLUE);
+    if(ui->bt.connected&&ui->bt.connected_name[0])
+        fsa_text(12,65,ui->bt.connected_name,1,GREEN);
     if(ui->busy)fsa_text(343,53,"ЗАЧЕКАЙТЕ",1,RED);
     fsa_rect(8,78,464,1,GRAY);
     for(int j=0;j<4;++j){

@@ -14,6 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test KCX v1.7 parser with observed hardware traces
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -I rp2350-pico2/src \
+            rp2350-pico2/tests/test_kcx_protocol.c rp2350-pico2/src/kcx_protocol.c \
+            -o /tmp/kcx-pico2-protocol-test
+          /tmp/kcx-pico2-protocol-test
       - name: Pico SDK 2.3.1
         uses: actions/checkout@v4
         with:

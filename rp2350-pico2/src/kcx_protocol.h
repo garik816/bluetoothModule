@@ -27,6 +27,8 @@ typedef struct {
     bool scanning;
     bool scan_finished;
     char version[48];
+    char connected_mac[KCX_MAC_LENGTH + 1];
+    char connected_name[KCX_DEVICE_NAME_LENGTH];
 } kcx_state_t;
 
 enum {

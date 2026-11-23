@@ -76,8 +76,12 @@ static void on_line(const char *line)
     unsigned event=kcx_parse_line(&s_ui.bt,line);
     if(event && !s_ui.bt.ready)s_ui.bt.ready=true;
     if(event & KCX_EVENT_ERROR){
-        if(s_op!=OP_IDLE){s_op=OP_IDLE;s_ui.busy=false;}
-        notice("KCX: ПОМИЛКА КОМАНДИ");
+        if(s_op!=OP_IDLE){
+            s_op=OP_IDLE;s_ui.busy=false;
+            notice("KCX: ПОМИЛКА КОМАНДИ");
+        }else{
+            puts("[KCX WARN] Command rejected by module; link remains active.");
+        }
     }
     if((event & KCX_EVENT_ERASE_ACK) && s_op==OP_WAIT_DELETE){
         char cmd[48];
@@ -149,6 +153,9 @@ static void show_status(void)
            !s_ui.bt.mode_known?"UNKNOWN":(s_ui.bt.transmitter?"TX":"RX"),
            !s_ui.bt.status_known?"UNKNOWN":(s_ui.bt.connected?"YES":"NO"),
            (unsigned)s_ui.bt.device_count,(int)s_ui.busy);
+    if(s_ui.bt.connected&&s_ui.bt.connected_mac[0])
+        printf("[BT PEER] name=%s MAC=%s\n",
+               s_ui.bt.connected_name,s_ui.bt.connected_mac);
     printf("[UART] UART0 115200 8N1 GP0->KCX RX GP1<-KCX TX rx_bytes=%lu lines=%lu overflow=%lu\n",
            (unsigned long)kcx_uart_rx_count(),
            (unsigned long)kcx_uart_line_count(),

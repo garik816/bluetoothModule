@@ -1,0 +1,36 @@
+name: Windows Bluetooth GUI
+
+on:
+  push:
+    branches:
+      - hw/rp2350-pico2
+    paths:
+      - 'rp2350-pico2/tools/gui/**'
+      - '.github/workflows/gui-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test GUI serial parser
+        run: |
+          python3 -m unittest discover -s rp2350-pico2/tools/gui/tests -v
+          python3 -m py_compile rp2350-pico2/tools/gui/desktop_gui.py rp2350-pico2/tools/gui/protocol.py
+
+  windows-exe:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build single-file GUI EXE
+        shell: pwsh
+        run: |
+          py -3 -m pip install -r rp2350-pico2/tools/gui/requirements.txt pyinstaller
+          py -3 -m PyInstaller --onefile --windowed --noconfirm --clean --name BluetoothModule-Pico2-GUI rp2350-pico2/tools/gui/desktop_gui.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BluetoothModule-Pico2-Windows-GUI
+          path: dist/BluetoothModule-Pico2-GUI.exe
+          if-no-files-found: error

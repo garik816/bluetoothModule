@@ -1,7 +1,7 @@
 /*
  * KCX_BT_EMITTER v1.7: UART0 at 115200.
  * RX IRQ ring buffers burst scan results during slow PIO/DMA LCD redraws.
- * GP0 TX -> KCX RX and GP1 RX <- KCX TX via 3.3/5V level translator.
+ * GP0 TX -> KCX RX, GP1 RX <- KCX TX; KCX mode selected by PCB jumper.
  */
 #include "kcx_uart.h"
 #include "pins.h"
@@ -19,12 +19,14 @@ static uint8_t s_ring[RX_RING_SIZE];
 static kcx_line_callback_t s_callback;
 static char s_line[160];
 static unsigned s_index;
-static volatile uint32_t s_overflow;
+static volatile uint32_t s_overflow,s_rx_bytes;
+static uint32_t s_rx_lines;
 
 static void on_uart_rx(void)
 {
     while(uart_is_readable(uart0)){
         uint8_t b=(uint8_t)uart_getc(uart0);
+        ++s_rx_bytes;
         uint16_t next=(uint16_t)((rx_w+1)&RX_RING_MASK);
         if(next==rx_r)++s_overflow;
         else {s_ring[rx_w]=b;rx_w=next;}
@@ -33,9 +35,7 @@ static void on_uart_rx(void)
 void kcx_uart_init(kcx_line_callback_t callback)
 {
     s_callback=callback;
-    /* KCX MODE pin may be 5V. Use a level translator; never apply 5V
-       directly to RP2350 GPIO. */
-    gpio_init(KCX_MODE);gpio_put(KCX_MODE,1);gpio_set_dir(KCX_MODE,GPIO_OUT);
+    /* No GP15 or software MODE signal: KCX v1.7 uses a hardware TX/RX strap. */
     uart_init(uart0,115200);
     gpio_set_function(KCX_UART_TX,GPIO_FUNC_UART);
     gpio_set_function(KCX_UART_RX,GPIO_FUNC_UART);
@@ -44,7 +44,7 @@ void kcx_uart_init(kcx_line_callback_t callback)
     irq_set_exclusive_handler(UART0_IRQ,on_uart_rx);
     irq_set_enabled(UART0_IRQ,true);
     uart_set_irq_enables(uart0,true,false);
-    puts("KCX v1.7 UART0 115200 IRQ RX active, MODE=EMITTER");
+    puts("[KCX] UART0 115200 IRQ RX active; GP15 unused, mode set on KCX PCB");
 }
 void kcx_uart_poll(void)
 {
@@ -60,6 +60,7 @@ void kcx_uart_poll(void)
         if(ch=='\r'||ch=='\n'){
             if(s_index){
                 s_line[s_index]=0;
+                ++s_rx_lines;
                 printf("KCX RX: %s\n",s_line);
                 if(s_callback)s_callback(s_line);
                 s_index=0;
@@ -79,3 +80,7 @@ bool kcx_uart_send(const char *command)
     uart_puts(uart0,"\r\n");
     return true;
 }
+
+uint32_t kcx_uart_rx_count(void){return s_rx_bytes;}
+uint32_t kcx_uart_line_count(void){return s_rx_lines;}
+uint32_t kcx_uart_overflow_count(void){return s_overflow;}

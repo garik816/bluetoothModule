@@ -175,7 +175,7 @@ static void devices_overlay(const ui_state_t *ui)
     }
     if(!ui->bt.device_count)fsa_text(49,93,"НЕМАЄ ЗНАЙДЕНИХ ПРИСТРОЇВ",1,METAL);
 }
-static void status_bar(const ui_state_t *ui)
+static void status_bar(const ui_state_t *ui,int tile_y)
 {
     fsa_rect(0,STATUS_Y,480,STATUS_H,NAVY);
     fsa_rect(0,STATUS_Y,480,2,CYAN);
@@ -184,7 +184,7 @@ static void status_bar(const ui_state_t *ui)
     const char *mode=ui->bt.mode_known?(ui->bt.transmitter?"TX":"RX"):"?";
     fsa_text(10,223,"BT",1,DIM);
     fsa_text(35,223,mode,1,BRIGHT);
-    disc(100,229,4,connected?GREEN:RED,(STATUS_Y/FSA_TILE_HEIGHT)*FSA_TILE_HEIGHT);
+    disc(100,229,4,connected?GREEN:RED,tile_y);
     fsa_text(111,223,connected?"LINK":"NO LINK",1,connected?GREEN:AMBER);
     fsa_text(208,223,ui->auto_enabled?(ui->auto_paused?"AUTO PAUSE":"AUTO ON"):"AUTO OFF",
              1,ui->auto_enabled?CYAN:RED);
@@ -208,7 +208,7 @@ static void draw_tile(const ui_state_t *ui,int tile_y)
         if(ui->show_list)devices_overlay(ui);
         else deck(ui,tile_y);
     }
-    status_bar(ui);
+    status_bar(ui,tile_y);
 }
 bool ui_draw(const ui_state_t *ui)
 {
